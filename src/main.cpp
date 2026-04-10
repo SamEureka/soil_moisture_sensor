@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Wire.h>
+#include <BH1750.h>
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_Client.h"
 
@@ -40,10 +42,10 @@
 #define ADC_SAMPLE_DELAY_MS 5
 #endif
 #ifndef AIR_VALUE
-#define AIR_VALUE 3100
+#define AIR_VALUE 3440
 #endif
 #ifndef WATER_VALUE
-#define WATER_VALUE 1200
+#define WATER_VALUE 1170
 #endif
 
 // --- Duty cycle guards ---
@@ -61,6 +63,7 @@ WiFiClient           mqttWifiClient;
 Adafruit_MQTT_Client mqtt(&mqttWifiClient, AIO_SERVER, AIO_SERVERPORT,
                            AIO_USERNAME, AIO_KEY);
 WebServer            server(80);
+BH1750               lightMeter;
 String               UID;
 unsigned long        wakeTime;
 
@@ -73,9 +76,13 @@ String nodeUID() {
   return String(uid);
 }
 
-// --- Feed path ---
-String feedPath() {
+// --- Feed paths ---
+String moistureFeedPath() {
   return String(AIO_USERNAME) + "/feeds/" + UID + "-soil-moisture";
+}
+
+String lightFeedPath() {
+  return String(AIO_USERNAME) + "/feeds/" + UID + "-light-level";
 }
 
 // --- Sensor ---
@@ -148,11 +155,21 @@ bool publishMoisture(int pct) {
   // so backlog will appear clustered at reconnect time. Consider InfluxDB ingest
   // for accurate historical timestamps when self-hosted stack is in place.
   if (!mqttConnect()) return false;
-  String path = feedPath();
+  String path = moistureFeedPath();
   Adafruit_MQTT_Publish feed(&mqtt, path.c_str());
   bool ok = feed.publish((int32_t)pct);
   Serial.printf("MQTT publish to %s: %d%% — %s\n",
                 path.c_str(), pct, ok ? "ok" : "failed");
+  return ok;
+}
+
+bool publishLight(float lux) {
+  if (!mqttConnect()) return false;
+  String path = lightFeedPath();
+  Adafruit_MQTT_Publish feed(&mqtt, path.c_str());
+  bool ok = feed.publish(lux);
+  Serial.printf("MQTT publish to %s: %.1f lx — %s\n",
+                path.c_str(), lux, ok ? "ok" : "failed");
   return ok;
 }
 
@@ -248,6 +265,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       </div>
     </div>
     <div class="status-label" id="status-label">Reading...</div>
+    <div class="light-value" id="light-value" style="font-size: 14px; margin-bottom: 0.5rem; color: #fbd38d;"></div>
     <div class="raw-value" id="raw-value"></div>
     <div class="updated" id="updated"></div>
     <div class="error" id="error"></div>
@@ -276,6 +294,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       pctEl.textContent = p;
       pctEl.style.color = color;
       document.getElementById('status-label').textContent = getLabel(p);
+      document.getElementById('light-value').textContent = 'Light intensity: ' + data.light_lux.toFixed(1) + ' lx';
       document.getElementById('raw-value').textContent = 'raw ADC: ' + data.moisture_raw;
       document.getElementById('updated').textContent =
         'updated ' + new Date().toLocaleTimeString();
@@ -306,10 +325,13 @@ void handleRoot() {
 void handleStatus() {
   int raw = 0;
   int pct = readMoisture(raw);
+  float lux = lightMeter.readLightLevel();
   String json = "{\"moisture_pct\":";
   json += pct;
   json += ",\"moisture_raw\":";
   json += raw;
+  json += ",\"light_lux\":";
+  json += lux;
   json += ",\"uid\":\"";
   json += UID;
   json += "\"}";
@@ -328,14 +350,25 @@ void setup() {
   digitalWrite(SENSOR_POWER_PIN, LOW);
   analogSetAttenuation(ADC_11db);
 
+  Wire.begin();
+  if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
+    Serial.println(F("BH1750 initialised"));
+  } else {
+    Serial.println(F("Error initialising BH1750"));
+  }
+
   bool online = wifiConnect();
 
   int raw = 0;
   int pct = readMoisture(raw);
   Serial.printf("Moisture: %d%% (raw: %d)\n", pct, raw);
 
+  float lux = lightMeter.readLightLevel();
+  Serial.printf("Light: %.1f lx\n", lux);
+
   if (online) {
     publishMoisture(pct);
+    publishLight(lux);
   }
 
   server.on("/", handleRoot);
@@ -353,6 +386,7 @@ void loop() {
 
   if (millis() - wakeTime >= (uint32_t)AWAKE_SECONDS * 1000) {
     Serial.println("Entering deep sleep...");
+    lightMeter.configure(BH1750::POWER_DOWN);
     Serial.flush();
     esp_sleep_enable_timer_wakeup(SLEEP_US);
     esp_deep_sleep_start();
