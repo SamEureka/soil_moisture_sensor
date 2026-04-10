@@ -185,20 +185,21 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #1a1a2e;
-      color: #eee;
+      background: #212733;
+      color: #eaeaea;
       display: flex;
       justify-content: center;
       align-items: center;
       min-height: 100vh;
     }
     .card {
-      background: #16213e;
+      background: #1f2430;
       border-radius: 16px;
       padding: 2rem;
       text-align: center;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
       min-width: 280px;
+      border: 1px solid #284458;
     }
     .card-header {
       display: flex;
@@ -209,7 +210,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     .card-title {
       font-size: 13px;
       font-weight: 500;
-      color: #a0aec0;
+      color: #bfbfbf;
       text-transform: uppercase;
       letter-spacing: 0.08em;
       text-align: left;
@@ -217,11 +218,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     .uid-badge {
       font-size: 11px;
       font-family: monospace;
-      background: #0f3460;
-      border: 1px solid #2d3748;
+      background: #284458;
+      border: 1px solid #3d5169;
       border-radius: 6px;
       padding: 3px 8px;
-      color: #90cdf4;
+      color: #00d4ff;
     }
     .gauge-wrap {
       position: relative;
@@ -238,12 +239,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       justify-content: center;
       align-items: center;
     }
-    .gauge-pct { font-size: 2rem; font-weight: 500; line-height: 1; }
-    .gauge-unit { font-size: 11px; color: #718096; margin-top: 3px; }
-    .status-label { font-size: 15px; font-weight: 500; margin-bottom: 4px; }
-    .raw-value { font-size: 12px; font-family: monospace; color: #718096; margin-bottom: 1rem; }
-    .updated { font-size: 11px; color: #4a5568; }
-    .error { margin-top: 1rem; font-size: 0.8rem; color: #fc8181; min-height: 1.2rem; }
+    .gauge-pct { font-size: 2rem; font-weight: 500; line-height: 1; color: #59c2ff; }
+    .gauge-unit { font-size: 11px; color: #8a9199; margin-top: 3px; }
+    .status-label { font-size: 15px; font-weight: 500; margin-bottom: 4px; color: #eaeaea; }
+    .raw-value { font-size: 12px; font-family: monospace; color: #8a9199; margin-bottom: 1rem; }
+    .updated { font-size: 11px; color: #5a6c7d; }
+    .error { margin-top: 1rem; font-size: 0.8rem; color: #f07178; min-height: 1.2rem; }
   </style>
 </head>
 <body>
