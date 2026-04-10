@@ -386,7 +386,8 @@ void loop() {
 
   if (millis() - wakeTime >= (uint32_t)AWAKE_SECONDS * 1000) {
     Serial.println("Entering deep sleep...");
-    lightMeter.configure(BH1750::POWER_DOWN);
+    // BH1750 uses UNCONFIGURED (0x00) as the power-down state.
+    lightMeter.configure(BH1750::UNCONFIGURED);
     Serial.flush();
     esp_sleep_enable_timer_wakeup(SLEEP_US);
     esp_deep_sleep_start();
