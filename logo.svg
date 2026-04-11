@@ -1,0 +1,59 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="#1a1a2e" stroke="#16213e" stroke-width="10"/>
+
+  <!-- Plant pot -->
+  <rect x="75" y="140" width="50" height="40" rx="5" fill="#8B4513"/>
+  <rect x="85" y="130" width="30" height="15" rx="3" fill="#654321"/>
+
+  <!-- Soil -->
+  <rect x="75" y="160" width="50" height="20" fill="#8B4513"/>
+  <circle cx="85" cy="165" r="2" fill="#654321"/>
+  <circle cx="105" cy="168" r="1.5" fill="#654321"/>
+  <circle cx="115" cy="162" r="2.5" fill="#654321"/>
+
+  <!-- Plant stem -->
+  <line x1="100" y1="180" x2="100" y2="120" stroke="#228B22" stroke-width="4"/>
+  <line x1="100" y1="140" x2="90" y2="130" stroke="#228B22" stroke-width="3"/>
+  <line x1="100" y1="135" x2="110" y2="125" stroke="#228B22" stroke-width="3"/>
+
+  <!-- Leaves -->
+  <ellipse cx="85" cy="125" rx="15" ry="8" fill="#32CD32" transform="rotate(-20 85 125)"/>
+  <ellipse cx="115" cy="120" rx="12" ry="6" fill="#32CD32" transform="rotate(25 115 120)"/>
+  <ellipse cx="95" cy="110" rx="10" ry="5" fill="#32CD32" transform="rotate(-10 95 110)"/>
+  <ellipse cx="105" cy="105" rx="8" ry="4" fill="#32CD32" transform="rotate(15 105 105)"/>
+
+  <!-- Sensor probe in soil -->
+  <rect x="95" y="165" width="10" height="15" fill="#C0C0C0" rx="2"/>
+  <rect x="97" y="167" width="6" height="11" fill="#808080"/>
+  <circle cx="100" cy="163" r="3" fill="#FFD700"/>
+  <line x1="100" y1="160" x2="100" y2="155" stroke="#FFD700" stroke-width="1"/>
+
+  <!-- Light sensor -->
+  <rect x="85" y="85" width="30" height="15" rx="3" fill="#000000"/>
+  <rect x="87" y="87" width="26" height="11" fill="#2C2C2C"/>
+  <circle cx="100" cy="92" r="4" fill="#00FFFF"/>
+  <text x="100" y="96" text-anchor="middle" font-size="6" fill="#FFFFFF">BH1750</text>
+
+  <!-- WiFi signal -->
+  <path d="M 160 70 Q 170 60 180 70" fill="none" stroke="#00FF00" stroke-width="2"/>
+  <path d="M 155 75 Q 170 55 185 75" fill="none" stroke="#00FF00" stroke-width="2"/>
+  <path d="M 150 80 Q 170 50 190 80" fill="none" stroke="#00FF00" stroke-width="2"/>
+
+  <!-- ESP32 indicator -->
+  <rect x="70" y="50" width="60" height="20" rx="5" fill="#FF6B35"/>
+  <text x="100" y="62" text-anchor="middle" font-size="8" fill="#FFFFFF" font-weight="bold">ESP32-C3</text>
+
+  <!-- Moisture gauge -->
+  <circle cx="50" cy="50" r="15" fill="none" stroke="#2d3748" stroke-width="3"/>
+  <path d="M 50 35 A 15 15 0 0 1 57.5 42.5" fill="none" stroke="#1D9E75" stroke-width="3" stroke-linecap="round"/>
+  <text x="50" y="55" text-anchor="middle" font-size="6" fill="#1D9E75">75%</text>
+
+  <!-- Light gauge -->
+  <circle cx="150" cy="50" r="15" fill="none" stroke="#2d3748" stroke-width="3"/>
+  <path d="M 150 35 A 15 15 0 0 1 165 50" fill="none" stroke="#EF9F27" stroke-width="3" stroke-linecap="round"/>
+  <text x="150" y="55" text-anchor="middle" font-size="6" fill="#EF9F27">2.3k lx</text>
+
+  <!-- Title -->
+  <text x="100" y="20" text-anchor="middle" font-size="12" fill="#FFFFFF" font-weight="bold">Soil Buddy</text>
+</svg>

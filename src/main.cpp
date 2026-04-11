@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Wire.h>
+#include <BH1750.h>
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_Client.h"
 
@@ -40,10 +42,10 @@
 #define ADC_SAMPLE_DELAY_MS 5
 #endif
 #ifndef AIR_VALUE
-#define AIR_VALUE 3100
+#define AIR_VALUE 3440
 #endif
 #ifndef WATER_VALUE
-#define WATER_VALUE 1200
+#define WATER_VALUE 1170
 #endif
 
 // --- Duty cycle guards ---
@@ -56,11 +58,22 @@
 
 const uint64_t SLEEP_US = (uint64_t)SLEEP_SECONDS * 1000000ULL;
 
+// --- BH1750 ---
+// Wired to 3V3 permanently — powered down via I2C before deep sleep
+// ADDR pin open (default) = 0x23, ADDR pin to VCC = 0x5C
+// Decide before potting — cannot change afterward
+#define BH1750_ADDR 0x23
+#define BH1750_SDA  D4
+#define BH1750_SCL  D5
+#define LIGHT_SAMPLES 3
+#define LIGHT_SAMPLE_DELAY_MS 120  // BH1750 needs ~120ms per measurement
+
 // --- Globals ---
 WiFiClient           mqttWifiClient;
 Adafruit_MQTT_Client mqtt(&mqttWifiClient, AIO_SERVER, AIO_SERVERPORT,
                            AIO_USERNAME, AIO_KEY);
 WebServer            server(80);
+BH1750               lightMeter;
 String               UID;
 unsigned long        wakeTime;
 
@@ -73,12 +86,16 @@ String nodeUID() {
   return String(uid);
 }
 
-// --- Feed path ---
-String feedPath() {
+// --- Feed paths ---
+String moistureFeed() {
   return String(AIO_USERNAME) + "/feeds/" + UID + "-soil-moisture";
 }
 
-// --- Sensor ---
+String lightFeed() {
+  return String(AIO_USERNAME) + "/feeds/" + UID + "-soil-light";
+}
+
+// --- Moisture sensor ---
 int readRawADC() {
   int total = 0;
   for (int i = 0; i < ADC_SAMPLES; i++) {
@@ -100,24 +117,36 @@ int readMoisture(int &rawOut) {
   return rawToPercent(rawOut);
 }
 
+// --- Light sensor ---
+float readLux() {
+  float total = 0;
+  for (int i = 0; i < LIGHT_SAMPLES; i++) {
+    float reading = lightMeter.readLightLevel();
+    if (reading < 0) {
+      Serial.printf("BH1750 read error on sample %d\n", i);
+      reading = 0;
+    }
+    total += reading;
+    if (i < LIGHT_SAMPLES - 1) delay(LIGHT_SAMPLE_DELAY_MS);
+  }
+  return total / LIGHT_SAMPLES;
+}
+
 // --- WiFi ---
 bool wifiConnect() {
   Serial.printf("Connecting to %s\n", WIFI_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 40) {
     delay(500);
     Serial.printf("  status: %d\n", WiFi.status());
     attempts++;
   }
-
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi failed.");
     return false;
   }
-
   Serial.printf("Connected! IP: %s\n", WiFi.localIP().toString().c_str());
   return true;
 }
@@ -141,18 +170,17 @@ bool mqttConnect() {
   return true;
 }
 
-bool publishMoisture(int pct) {
+bool publishFloat(const String &feed, float value) {
   // TODO: resilience - buffer failed readings in RTC memory across sleep cycles
   // and flush oldest-first on reconnect. Use cycle count for offline timestamps
   // since SNTP requires WiFi. Note: Adafruit IO free tier timestamps on receipt,
   // so backlog will appear clustered at reconnect time. Consider InfluxDB ingest
   // for accurate historical timestamps when self-hosted stack is in place.
   if (!mqttConnect()) return false;
-  String path = feedPath();
-  Adafruit_MQTT_Publish feed(&mqtt, path.c_str());
-  bool ok = feed.publish((int32_t)pct);
-  Serial.printf("MQTT publish to %s: %d%% — %s\n",
-                path.c_str(), pct, ok ? "ok" : "failed");
+  Adafruit_MQTT_Publish pub(&mqtt, feed.c_str());
+  bool ok = pub.publish(value);
+  Serial.printf("MQTT publish to %s: %.1f — %s\n",
+                feed.c_str(), value, ok ? "ok" : "failed");
   return ok;
 }
 
@@ -163,7 +191,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Soil Moisture</title>
+  <title>Soil Monitor</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -181,7 +209,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       padding: 2rem;
       text-align: center;
       box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-      min-width: 280px;
+      min-width: 300px;
     }
     .card-header {
       display: flex;
@@ -206,11 +234,18 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       padding: 3px 8px;
       color: #90cdf4;
     }
+    .gauges {
+      display: flex;
+      justify-content: space-around;
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }
+    .gauge-block { flex: 1; }
     .gauge-wrap {
       position: relative;
-      width: 140px;
-      height: 140px;
-      margin: 0 auto 1.25rem;
+      width: 110px;
+      height: 110px;
+      margin: 0 auto 0.5rem;
     }
     .gauge-wrap svg { transform: rotate(-90deg); display: block; }
     .gauge-text {
@@ -221,67 +256,149 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       justify-content: center;
       align-items: center;
     }
-    .gauge-pct { font-size: 2rem; font-weight: 500; line-height: 1; }
-    .gauge-unit { font-size: 11px; color: #718096; margin-top: 3px; }
-    .status-label { font-size: 15px; font-weight: 500; margin-bottom: 4px; }
-    .raw-value { font-size: 12px; font-family: monospace; color: #718096; margin-bottom: 1rem; }
-    .updated { font-size: 11px; color: #4a5568; }
+    .gauge-pct { font-size: 1.6rem; font-weight: 500; line-height: 1; }
+    .gauge-unit { font-size: 10px; color: #718096; margin-top: 3px; }
+    .gauge-title { font-size: 11px; color: #a0aec0; text-transform: uppercase;
+                   letter-spacing: 0.06em; margin-bottom: 0.4rem; }
+    .status-label { font-size: 13px; font-weight: 500; }
+    .divider {
+      border: none;
+      border-top: 1px solid #2d3748;
+      margin: 1.25rem 0;
+    }
+    .raw-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-family: monospace;
+      color: #718096;
+      margin-bottom: 0.5rem;
+    }
+    .updated { font-size: 11px; color: #4a5568; margin-top: 0.5rem; }
     .error { margin-top: 1rem; font-size: 0.8rem; color: #fc8181; min-height: 1.2rem; }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">Soil moisture</div>
+      <div class="card-title">Soil monitor</div>
       <div class="uid-badge" id="uid-badge">----</div>
     </div>
-    <div class="gauge-wrap">
-      <svg width="140" height="140" viewBox="0 0 140 140">
-        <circle cx="70" cy="70" r="56" fill="none" stroke="#2d3748" stroke-width="10"/>
-        <circle cx="70" cy="70" r="56" fill="none" id="gauge-arc"
-          stroke="#1D9E75" stroke-width="10" stroke-linecap="round"
-          stroke-dasharray="351.86" stroke-dashoffset="351.86"/>
-      </svg>
-      <div class="gauge-text">
-        <span class="gauge-pct" id="pct" style="color:#1D9E75">--</span>
-        <span class="gauge-unit">% moisture</span>
+
+    <div class="gauges">
+      <div class="gauge-block">
+        <div class="gauge-title">Moisture</div>
+        <div class="gauge-wrap">
+          <svg width="110" height="110" viewBox="0 0 110 110">
+            <circle cx="55" cy="55" r="44" fill="none" stroke="#2d3748" stroke-width="8"/>
+            <circle cx="55" cy="55" r="44" fill="none" id="moisture-arc"
+              stroke="#1D9E75" stroke-width="8" stroke-linecap="round"
+              stroke-dasharray="276.46" stroke-dashoffset="276.46"/>
+          </svg>
+          <div class="gauge-text">
+            <span class="gauge-pct" id="moisture-pct" style="color:#1D9E75">--</span>
+            <span class="gauge-unit">%</span>
+          </div>
+        </div>
+        <div class="status-label" id="moisture-label">--</div>
+      </div>
+
+      <div class="gauge-block">
+        <div class="gauge-title">Light</div>
+        <div class="gauge-wrap">
+          <svg width="110" height="110" viewBox="0 0 110 110">
+            <circle cx="55" cy="55" r="44" fill="none" stroke="#2d3748" stroke-width="8"/>
+            <circle cx="55" cy="55" r="44" fill="none" id="light-arc"
+              stroke="#EF9F27" stroke-width="8" stroke-linecap="round"
+              stroke-dasharray="276.46" stroke-dashoffset="276.46"/>
+          </svg>
+          <div class="gauge-text">
+            <span class="gauge-pct" id="light-pct" style="color:#EF9F27">--</span>
+            <span class="gauge-unit">lux</span>
+          </div>
+        </div>
+        <div class="status-label" id="light-label">--</div>
       </div>
     </div>
-    <div class="status-label" id="status-label">Reading...</div>
-    <div class="raw-value" id="raw-value"></div>
+
+    <hr class="divider">
+    <div class="raw-row">
+      <span>moisture raw</span>
+      <span id="moisture-raw">--</span>
+    </div>
+    <div class="raw-row">
+      <span>light raw</span>
+      <span id="light-raw">--</span>
+    </div>
     <div class="updated" id="updated"></div>
     <div class="error" id="error"></div>
   </div>
+
   <script>
-    const CIRC = 351.86;
-    function getColor(p) {
+    const MOISTURE_CIRC = 276.46;
+    const LIGHT_CIRC    = 276.46;
+    const MAX_LUX       = 100000;
+
+    function getMoistureColor(p) {
       if (p < 20) return '#E24B4A';
       if (p < 40) return '#EF9F27';
       if (p < 70) return '#1D9E75';
       return '#378ADD';
     }
-    function getLabel(p) {
+    function getMoistureLabel(p) {
       if (p < 20) return 'Dry';
       if (p < 40) return 'Low';
       if (p < 70) return 'Good';
       return 'Wet';
     }
-    function updateUI(data) {
-      const p = data.moisture_pct;
-      const color = getColor(p);
-      const arc = document.getElementById('gauge-arc');
+    function getLightColor(p) {
+      if (p < 10) return '#4a5568';
+      if (p < 30) return '#EF9F27';
+      return '#FAC75A';
+    }
+    function getLightLabel(lux) {
+      if (lux < 100)   return 'Dark';
+      if (lux < 1000)  return 'Dim';
+      if (lux < 10000) return 'Bright';
+      return 'Full sun';
+    }
+
+    function updateArc(arcId, circ, pct, color) {
+      const arc = document.getElementById(arcId);
       arc.style.stroke = color;
-      arc.setAttribute('stroke-dashoffset', CIRC * (1 - p / 100));
-      const pctEl = document.getElementById('pct');
-      pctEl.textContent = p;
-      pctEl.style.color = color;
-      document.getElementById('status-label').textContent = getLabel(p);
-      document.getElementById('raw-value').textContent = 'raw ADC: ' + data.moisture_raw;
+      arc.setAttribute('stroke-dashoffset', circ * (1 - pct / 100));
+    }
+
+    function updateUI(data) {
+      // Moisture
+      const mp = data.moisture_pct;
+      const mc = getMoistureColor(mp);
+      updateArc('moisture-arc', MOISTURE_CIRC, mp, mc);
+      const mpEl = document.getElementById('moisture-pct');
+      mpEl.textContent = mp;
+      mpEl.style.color = mc;
+      document.getElementById('moisture-label').textContent = getMoistureLabel(mp);
+      document.getElementById('moisture-raw').textContent = data.moisture_raw;
+
+      // Light
+      const lux = data.light_lux;
+      const luxPct = Math.min(lux / MAX_LUX * 100, 100);
+      const lc = getLightColor(luxPct);
+      updateArc('light-arc', LIGHT_CIRC, luxPct, lc);
+      const lpEl = document.getElementById('light-pct');
+      lpEl.textContent = lux >= 1000
+        ? (lux / 1000).toFixed(1) + 'k'
+        : Math.round(lux);
+      lpEl.style.color = lc;
+      document.getElementById('light-label').textContent = getLightLabel(lux);
+      document.getElementById('light-raw').textContent = lux.toFixed(1) + ' lx';
+
+      document.getElementById('uid-badge').textContent = data.uid;
       document.getElementById('updated').textContent =
         'updated ' + new Date().toLocaleTimeString();
-      document.getElementById('uid-badge').textContent = data.uid;
       document.getElementById('error').textContent = '';
     }
+
     async function fetchStatus() {
       try {
         const res = await fetch('/status');
@@ -291,6 +408,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         document.getElementById('error').textContent = 'Could not reach device';
       }
     }
+
     fetchStatus();
     setInterval(fetchStatus, 2000);
   </script>
@@ -306,38 +424,59 @@ void handleRoot() {
 void handleStatus() {
   int raw = 0;
   int pct = readMoisture(raw);
-  String json = "{\"moisture_pct\":";
-  json += pct;
-  json += ",\"moisture_raw\":";
-  json += raw;
-  json += ",\"uid\":\"";
-  json += UID;
-  json += "\"}";
+  float lux = readLux();
+
+  String json = "{";
+  json += "\"moisture_pct\":"  + String(pct)         + ",";
+  json += "\"moisture_raw\":"  + String(raw)          + ",";
+  json += "\"light_lux\":"     + String(lux, 1)       + ",";
+  json += "\"uid\":\""         + UID                  + "\"";
+  json += "}";
+
   server.send(200, "application/json", json);
 }
 
 // --- Setup ---
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(2000);
 
   UID = nodeUID();
   Serial.printf("Node UID: %s\n", UID.c_str());
 
+  // Moisture sensor power pin
   pinMode(SENSOR_POWER_PIN, OUTPUT);
   digitalWrite(SENSOR_POWER_PIN, LOW);
   analogSetAttenuation(ADC_11db);
 
-  bool online = wifiConnect();
-
-  int raw = 0;
-  int pct = readMoisture(raw);
-  Serial.printf("Moisture: %d%% (raw: %d)\n", pct, raw);
-
-  if (online) {
-    publishMoisture(pct);
+  // BH1750 on I2C
+  Wire.begin(BH1750_SDA, BH1750_SCL);
+  if (!lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE, BH1750_ADDR)) {
+    Serial.println("BH1750 not found — check wiring");
+  } else {
+    Serial.println("BH1750 ready");
   }
 
+  // WiFi
+  bool online = wifiConnect();
+
+  // Read sensors
+  int raw = 0;
+  int pct = readMoisture(raw);
+  float lux = readLux();
+  Serial.printf("Moisture: %d%% (raw: %d)\n", pct, raw);
+  Serial.printf("Light: %.1f lux\n", lux);
+
+  // Publish if online
+  if (online) {
+    publishFloat(moistureFeed(), (float)pct);
+    publishFloat(lightFeed(), lux);
+  }
+
+  // Power down BH1750 before sleep
+  lightMeter.powerDown();
+
+  // Start webserver for remainder of awake window
   server.on("/", handleRoot);
   server.on("/favicon.ico", []() { server.send(204); });
   server.on("/status", handleStatus);
@@ -353,6 +492,7 @@ void loop() {
 
   if (millis() - wakeTime >= (uint32_t)AWAKE_SECONDS * 1000) {
     Serial.println("Entering deep sleep...");
+    lightMeter.powerDown();
     Serial.flush();
     esp_sleep_enable_timer_wakeup(SLEEP_US);
     esp_deep_sleep_start();
