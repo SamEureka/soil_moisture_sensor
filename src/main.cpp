@@ -474,7 +474,9 @@ void setup() {
   }
 
   // Power down BH1750 before sleep
-  lightMeter.powerDown();
+  Wire.beginTransmission(BH1750_ADDR);
+  Wire.write(0x00); // Power down command
+  Wire.endTransmission();
 
   // Start webserver for remainder of awake window
   server.on("/", handleRoot);
@@ -492,7 +494,9 @@ void loop() {
 
   if (millis() - wakeTime >= (uint32_t)AWAKE_SECONDS * 1000) {
     Serial.println("Entering deep sleep...");
-    lightMeter.powerDown();
+    Wire.beginTransmission(BH1750_ADDR);
+    Wire.write(0x00); // Power down command
+    Wire.endTransmission();
     Serial.flush();
     esp_sleep_enable_timer_wakeup(SLEEP_US);
     esp_deep_sleep_start();
