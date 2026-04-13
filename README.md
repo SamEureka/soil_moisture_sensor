@@ -1,7 +1,7 @@
 # 🌱 Soil Moisture Sensor
 
 <p align="center">
-  <img src="soil_monitor_logo.svg" alt="Soil Monitor Logo" width="240"/>
+  <img src="soil_monitor_logo.png" alt="Soil Monitor Logo" width="240"/>
 </p>
 
 Hey there, plant parent! 👋 Welcome to your new best gardening gadget – a Soil Moisture Sensor! This little ESP32-powered wonder keeps tabs on your plants' soil moisture and light levels, so you can give them the perfect TLC they deserve. No more guessing if your greens are thirsty or basking in just the right amount of sunshine!
@@ -33,7 +33,7 @@ A smart sensor that:
 ### Wiring Diagram
 
 <p align="center">
-  <img src="soil_monitor_wiring_v3.svg" alt="Soil Monitor Wiring Diagram" width="100%" style="max-width:700px;"/>
+  <img src="soil_monitor_wiring_diagram_v4.png" alt="Soil Monitor Wiring Diagram" width="100%" style="max-width:700px;"/>
 </p>
 
 **Pro Tip:** Power the soil sensor through a digital pin (D2) so we can turn it off to save battery and prevent corrosion!
