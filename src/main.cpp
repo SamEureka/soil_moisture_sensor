@@ -3,6 +3,8 @@
 #include <WebServer.h>
 #include <Wire.h>
 #include <BH1750.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_Client.h"
 
@@ -68,6 +70,14 @@ const uint64_t SLEEP_US = (uint64_t)SLEEP_SECONDS * 1000000ULL;
 #define LIGHT_SAMPLES 3
 #define LIGHT_SAMPLE_DELAY_MS 120  // BH1750 needs ~120ms per measurement
 
+// --- SSD1306 OLED Display ---
+// 0.96" 128x64 display (I2C, address 0x3C)
+// Connected to same I2C bus as BH1750 (D4/D5)
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_ADDR 0x3C
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
 // --- Globals ---
 WiFiClient           mqttWifiClient;
 Adafruit_MQTT_Client mqtt(&mqttWifiClient, AIO_SERVER, AIO_SERVERPORT,
@@ -76,6 +86,11 @@ WebServer            server(80);
 BH1750               lightMeter;
 String               UID;
 unsigned long        wakeTime;
+
+// Display state
+int lastMoisturePct = 0;
+float lastLuxReading = 0;
+bool displayInitialized = false;
 
 // --- Node UID ---
 String nodeUID() {
@@ -130,6 +145,113 @@ float readLux() {
     if (i < LIGHT_SAMPLES - 1) delay(LIGHT_SAMPLE_DELAY_MS);
   }
   return total / LIGHT_SAMPLES;
+}
+
+// --- Display Functions ---
+// Draw a semicircular gauge with value label
+void drawGauge(int x, int y, int radius, int percent, int16_t color, const char*label) {
+  // Draw label
+  display.setTextSize(1);
+  display.setTextColor(color);
+  display.setCursor(x - 12, y - radius - 10);
+  display.println(label);
+  
+  // Draw gauge circle (background)
+  display.drawCircle(x, y, radius, color);
+  
+  // Draw filled arc for percentage (approximated with lines)
+  int startAngle = 180;  // Start from left
+  int endAngle = startAngle + (percent * 180 / 100);  // Sweep to right based on percentage
+  
+  for (int angle = startAngle; angle <= endAngle; angle += 5) {
+    float rad = angle * PI / 180.0;
+    int x1 = x + (radius - 2) * cos(rad);
+    int y1 = y + (radius - 2) * sin(rad);
+    int x2 = x + radius * cos(rad);
+    int y2 = y + radius * sin(rad);
+    display.drawLine(x1, y1, x2, y2, color);
+  }
+  
+  // Draw percentage/value in center
+  display.setTextSize(2);
+  display.setTextColor(color);
+  char valStr[10];
+  snprintf(valStr, sizeof(valStr), "%d%%", percent);
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(valStr, x, y, &x1, &y1, &w, &h);
+  display.setCursor(x - w/2, y - h/2);
+  display.println(valStr);
+}
+
+// Draw light level gauge with special formatting 
+void drawLightGauge(int x, int y, int radius, float lux) {
+  // Scale lux to percentage (0-100000 lux = 0-100%)
+  int percent = constrain((int)(lux / 100000.0 * 100), 0, 100);
+  
+  // Determine color based on light level
+  int16_t color = SSD1306_WHITE;
+  if (lux < 100) color = SSD1306_WHITE;      // Dark
+  else if (lux < 1000) color = SSD1306_WHITE;  // Dim
+  else color = SSD1306_WHITE;                   // Bright/Full sun
+  
+  // Draw label
+  display.setTextSize(1);
+  display.setTextColor(color);
+  display.setCursor(x - 8, y - radius - 10);
+  display.println("Light");
+  
+  // Draw gauge circle (background)
+  display.drawCircle(x, y, radius, color);
+  
+  // Draw filled arc for percentage
+  int startAngle = 180;
+  int endAngle = startAngle + (percent * 180 / 100);
+  
+  for (int angle = startAngle; angle <= endAngle; angle += 5) {
+    float rad = angle * PI / 180.0;
+    int x1 = x + (radius - 2) * cos(rad);
+    int y1 = y + (radius - 2) * sin(rad);
+    int x2 = x + radius * cos(rad);
+    int y2 = y + radius * sin(rad);
+    display.drawLine(x1, y1, x2, y2, color);
+  }
+  
+  // Draw lux value with smart formatting
+  display.setTextSize(1);
+  display.setTextColor(color);
+  char valStr[15];
+  if (lux >= 1000) {
+    snprintf(valStr, sizeof(valStr), "%.1fk", lux / 1000.0);
+  } else {
+    snprintf(valStr, sizeof(valStr), "%d", (int)lux);
+  }
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(valStr, x, y, &x1, &y1, &w, &h);
+  display.setCursor(x - w/2, y - 2);
+  display.println(valStr);
+  
+  // Draw unit
+  display.setTextSize(1);
+  display.setCursor(x - 5, y + 8);
+  display.println("lux");
+}
+
+// Update display with sensor readings
+void updateDisplay(int moisturePct, float lux) {
+  if (!displayInitialized) return;
+  
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Left side: Moisture gauge (0-50 on x-axis, centered)
+  drawGauge(25, 32, 18, moisturePct, SSD1306_WHITE, "Moist");
+  
+  // Right side: Light gauge (78-128 on x-axis, centered)
+  drawLightGauge(101, 32, 18, lux);
+  
+  display.display();
 }
 
 // --- WiFi ---
@@ -426,6 +548,11 @@ void handleStatus() {
   int pct = readMoisture(raw);
   float lux = readLux();
 
+  // Update display with latest readings
+  lastMoisturePct = pct;
+  lastLuxReading = lux;
+  updateDisplay(pct, lux);
+
   String json = "{";
   json += "\"moisture_pct\":"  + String(pct)         + ",";
   json += "\"moisture_raw\":"  + String(raw)          + ",";
@@ -457,6 +584,22 @@ void setup() {
     Serial.println("BH1750 ready");
   }
 
+  // SSD1306 OLED display on same I2C bus
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println("SSD1306 not found — check wiring");
+    displayInitialized = false;
+  } else {
+    Serial.println("SSD1306 ready");
+    displayInitialized = true;
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(20, 28);
+    display.println("Soil Monitor");
+    display.display();
+    delay(1000);
+  }
+
   // WiFi
   bool online = wifiConnect();
 
@@ -467,6 +610,11 @@ void setup() {
   Serial.printf("Moisture: %d%% (raw: %d)\n", pct, raw);
   Serial.printf("Light: %.1f lux\n", lux);
 
+  // Update OLED display
+  lastMoisturePct = pct;
+  lastLuxReading = lux;
+  updateDisplay(pct, lux);
+
   // Publish if online
   if (online) {
     publishFloat(moistureFeed(), (float)pct);
@@ -475,7 +623,7 @@ void setup() {
 
   // Power down BH1750 before sleep
   Wire.beginTransmission(BH1750_ADDR);
-  Wire.write(0x00); // Power down command
+  // Wire.write(0x00); // Power down command (not needed here, I want it to read continuously until sleep)
   Wire.endTransmission();
 
   // Start webserver for remainder of awake window
@@ -491,6 +639,13 @@ void setup() {
 // --- Loop ---
 void loop() {
   server.handleClient();
+
+  // Periodically refresh display with last readings
+  static unsigned long lastDisplayUpdate = 0;
+  if (millis() - lastDisplayUpdate >= 2000) {  // Update every 2 seconds
+    updateDisplay(lastMoisturePct, lastLuxReading);
+    lastDisplayUpdate = millis();
+  }
 
   if (millis() - wakeTime >= (uint32_t)AWAKE_SECONDS * 1000) {
     Serial.println("Entering deep sleep...");
