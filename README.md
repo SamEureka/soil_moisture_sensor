@@ -1,4 +1,4 @@
-# 🌱 Soil Moisture Sensor
+# 🌱 The Dew Drop Detective & Deputy Sun Ray
 
 <p align="center">
   <img src="soil_monitor_logo.png" alt="Soil Monitor Logo" width="240"/>
@@ -7,7 +7,7 @@
 Hey there, plant parent! 👋 Welcome to your new best gardening gadget – a Soil Moisture Sensor! This little ESP32-powered wonder keeps tabs on your plants' soil moisture and light levels, so you can give them the perfect TLC they deserve. No more guessing if your greens are thirsty or basking in just the right amount of sunshine!
 
 <p align="center">
-  <img src="soil_monitor_hero.svg" alt="Soil Monitor Hero" width="100%" style="max-width:700px;"/>
+  <img src="soil_monitor_hero_v2.png" alt="Soil Monitor Hero" width="100%" style="max-width:700px;"/>
 </p>
 
 
