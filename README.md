@@ -4,7 +4,7 @@
   <img src="soil_monitor_logo.png" alt="Soil Monitor Logo" width="240"/>
 </p>
 
-Hey there, plant parent! 👋 Welcome to your new best gardening gadget – a Soil Moisture Sensor! This little ESP32-powered wonder keeps tabs on your plants' soil moisture and light levels, so you can give them the perfect TLC they deserve. No more guessing if your greens are thirsty or basking in just the right amount of sunshine!
+Hey there! 👋 Welcome to your new best gardening gadget – a Soil Moisture Sensor! This little ESP32-powered wonder keeps tabs on your plants' soil moisture and light levels, so you can give them the perfect TLC they deserve. No more guessing if your greens are thirsty or basking in just the right amount of sunshine!
 
 <p align="center">
   <img src="soil_monitor_hero_v2.png" alt="Soil Monitor Hero" width="100%" style="max-width:700px;"/>
@@ -37,6 +37,37 @@ A smart sensor that:
 </p>
 
 **Pro Tip:** Power the soil sensor through a digital pin (D2) so we can turn it off to save battery and prevent corrosion!
+
+### Battery Monitoring & Power Management
+To accurately monitor the 3.7V LiPo battery without draining it, this project utilizes a switched high-impedance voltage divider.
+
+<p align="center">
+  <img src="soil-voltage-divider.png" alt="Voltage Divider Wiring Diagram" width="100%" style="max-width:700px;"/>
+</p>
+
+#### The Hardware Design
+Since the ESP32C3’s Analog-to-Digital Converter (ADC) has a maximum input voltage of 3.3V, a direct connection to a fully charged battery (4.2V) would damage the MCU. To solve this, we use:
+
+* **Dual 1MΩ Resistors:** These form a 1/2 voltage divider, safely reducing the battery voltage to a range of 1.6V – 2.1V. Using 1MΩ (rather than the more common 100kΩ) minimizes the "parasitic" current draw during operation.
+
+* **2N7000 MOSFET Switch:** High-value resistors still cause a constant drain. By placing a 2N7000 N-Channel MOSFET between the divider and Ground, we can "turn off" the divider entirely. The Gate is connected to D8, allowing the MCU to only engage the circuit during a reading.
+
+* **0.1µF Ceramic Capacitor:** High-impedance circuits are susceptible to electrical noise from the WiFi radio. A non-polarized ceramic capacitor is placed between the ADC pin (D10) and Ground to stabilize the signal for accurate readings.
+
+#### The Measurement Logic
+To ensure an accurate reading with such high resistance values, the firmware follows a specific sequence:
+
+**Engage:** Pull D8 HIGH to close the circuit.
+
+**Settle:** Wait 10ms to allow the 0.1µF capacitor to charge through the 1MΩ resistors.
+
+**Sample:** Take 10 ADC samples and average them to eliminate outliers.
+
+**Disengage:** Pull D8 LOW to prevent further battery drain during the 1-hour deep sleep cycle.
+
+>[!IMPORTANT] 
+> ***Power Path & Protection***
+> For the devices using the CN3065 solar manager, a Schottky Diode is placed on the System Out line. This acts as a "one-way valve" that prevents the Xiao’s internal USB charging circuit from back-feeding into the solar controller or battery when the device is plugged in for programming.
 
 ## 🚀 Getting Started
 
