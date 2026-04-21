@@ -30,11 +30,42 @@
 
 // --- Pin guards ---
 #ifndef MOISTURE_PIN
-#define MOISTURE_PIN D0
+#define MOISTURE_PIN D0 // analog pin for moisture sensor
 #endif
 #ifndef SENSOR_POWER_PIN
-#define SENSOR_POWER_PIN D2
+#define SENSOR_POWER_PIN D2 // powers the moisture sensor via MOSFET to avoid idle current draw
 #endif
+
+// --- Battery voltage divider guards ---
+#ifndef VBAT_PIN
+#define VBAT_PIN D10 // 1MΩ voltage divider from battery to ADC pin
+#endif
+#ifndef VBAT_POWER_PIN
+#define VBAT_POWER_PIN D8 // 2N7000 gate to switch divider for measurement
+#endif
+#ifndef VBAT_ADC_MV_MAX
+#define VBAT_ADC_MV_MAX 2450.0f // mV at ADC count 4095 (11dB, empirically ~2450)
+#endif
+#ifndef VBAT_SCALE
+#define VBAT_SCALE 2.0f // restore divided voltage (1M/1M = ÷2)/ scale factor for voltage divider (1M /
+#endif
+#ifndef VBAT_FULL
+#define VBAT_FULL 4.20f // mV corresponding to 100% battery level (empirically ~4.2V)
+#endif
+#ifndef VBAT_EMPTY
+#define VBAT_EMPTY 3.20f // mV corresponding to 0% battery level (empirically ~3.0V)
+#endif
+#ifndef VBAT_SAMPLES
+#define VBAT_SAMPLES 10 // number of ADC samples to average for battery voltage reading  
+#endif
+#ifndef VBAT_SAMPLE_DELAY_MS
+#define VBAT_SAMPLE_DELAY_MS 10 // delay between ADC samples for battery voltage reading 
+#endif
+#ifndef VBAT_POWER_SETTLE_MS
+#define VBAT_POWER_SETTLE_MS 50 // delay after enabling voltage divider before taking ADC readings 
+#endif
+
+
 
 // --- Calibration guards ---
 #ifndef ADC_SAMPLES
@@ -88,6 +119,8 @@ unsigned long           wakeTime;
 int                     lastMoisturePct = 0;
 int                     lastMoistureRaw = 0;
 float                   lastLux         = 0;
+float                   lastBatteryV  = 0.0f;
+int                     lastBatteryPct = 0;
 
 // --- Node UID ---
 String nodeUID() {
@@ -104,6 +137,9 @@ String moistureFeed() {
 }
 String lightFeed() {
   return String(AIO_USERNAME) + "/feeds/" + UID + "-soil-light";
+}
+String batteryFeed() {
+  return String(AIO_USERNAME) + "/feeds/" + UID + "-soil-battery";
 }
 
 // --- Sensor reading ---
@@ -138,6 +174,31 @@ float readLux() {
   }
   return total / LIGHT_SAMPLES;
 }
+
+// read battery voltage by enabling power to divider, taking ADC readings, then disabling power to save current
+float readBatter(int &pctOut) {
+  pinMode(VBAT_POWER_PIN, OUTPUT);
+  digitalWrite(VBAT_POWER_PIN, HIGH);
+  delay(VBAT_POWER_SETTLE_MS);
+
+  uint32_t total = 0;
+  for (int i = 0; i < VBAT_SAMPLES; i++) {
+    total += analogRead(VBAT_PIN);
+    delay(VBAT_SAMPLE_DELAY_MS);
+  } 
+  digitalWrite(VBAT_POWER_PIN, LOW); // kill divider power to save current
+
+  float raw = (float)total / VBAT_SAMPLES;
+  float adcMv = raw * (VBAT_ADC_MV_MAX / 4095.0f); // convert ADC count to mV 
+  float battV = (adcMv /1000.0f) * VBAT_SCALE; // restore actual battery voltage from divided voltage 
+
+  pctOut = (int)constrain(
+    ((battV - VBAT_EMPTY) / (VBAT_FULL - VBAT_EMPTY)) * 100.0f,
+    0.0f, 100.0f
+  );
+  return battV;
+}
+
 
 // --- Display helpers ---
 
@@ -285,28 +346,31 @@ void updateDisplay() {
     char sleepMsg[20];
     snprintf(sleepMsg, sizeof(sleepMsg), "sleep %dm", SLEEP_SECONDS / 60);
     display.print(sleepMsg);
-  } else {
+} else {
     // UID on left
     display.setCursor(2, 56);
     display.print(UID);
 
-    // progress bar: x=28, y=59, w=72, h=5
+    // battery voltage right-justified (e.g. "3.87V")
+    char batStr[8];
+    snprintf(batStr, sizeof(batStr), "%.2fV", lastBatteryV);
+    int batW = strlen(batStr) * 6;
+    display.setCursor(SCREEN_WIDTH - batW - 1, 56);
+    display.print(batStr);
+
+    // progress bar between UID and voltage — shrink width to leave room for "X.XXV"
+    // UID ends around x=26, voltage label is ~batW wide at right edge
     int barX = 28;
     int barY = 56;
-    int barW = 72;
+    int barW = SCREEN_WIDTH - barX - batW - 4;   // 4px gutter
     int barH = 6;
-    display.drawRect(barX, barY, barW, barH, SSD1306_WHITE);
-    int filled = (int)(barW * (float)remaining / (float)AWAKE_SECONDS);
-    if (filled > 2) {
-      display.fillRect(barX + 1, barY + 1, filled - 2, barH - 2, SSD1306_WHITE);
+    if (barW > 4) {
+      display.drawRect(barX, barY, barW, barH, SSD1306_WHITE);
+      int filledW = (int)(barW * (float)remaining / (float)AWAKE_SECONDS);
+      if (filledW > 2) {
+        display.fillRect(barX + 1, barY + 1, filledW - 2, barH - 2, SSD1306_WHITE);
+      }
     }
-
-    // countdown number right of bar
-    char countStr[6];
-    snprintf(countStr, sizeof(countStr), "%ds", remaining);
-    int countW = strlen(countStr) * 6;
-    display.setCursor(SCREEN_WIDTH - countW - 1, 56);
-    display.print(countStr);
   }
 
   display.display();
@@ -442,6 +506,28 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                    letter-spacing: 0.06em; margin-bottom: 0.4rem; }
     .status-label { font-size: 13px; font-weight: 500; }
     .divider { border: none; border-top: 1px solid #2d3748; margin: 1.25rem 0; }
+    .bat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-family: monospace;
+      color: #a0aec0;
+      margin-bottom: 0.75rem;
+    }
+    .bat-bar-wrap {
+      flex: 1;
+      margin: 0 0.75rem;
+      height: 6px;
+      background: #2d3748;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .bat-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.5s ease, background 0.5s ease;
+    }
     .raw-row {
       display: flex;
       justify-content: space-between;
@@ -495,6 +581,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       </div>
     </div>
     <hr class="divider">
+    <div class="bat-row">
+      <span>&#x1F50B;</span>
+      <div class="bat-bar-wrap">
+        <div class="bat-bar-fill" id="bat-bar" style="width:0%"></div>
+      </div>
+      <span id="bat-label" style=font-family:monospace;font-size:11px;>--</span>" 
+    </div>    
     <div class="raw-row">
       <span>moisture raw</span>
       <span id="moisture-raw">--</span>
@@ -558,6 +651,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       lpEl.style.color = lc;
       document.getElementById('light-label').textContent = getLightLabel(lux);
       document.getElementById('light-raw').textContent = lux.toFixed(1) + ' lx';
+      // battery
+      const bv  = data.battery_v;
+      const bpc = data.battery_pct;
+      const batColor = bpc > 50 ? '#1D9E75' : bpc > 20 ? '#EF9F27' : '#E24B4A';
+      const batBar = document.getElementById('bat-bar');
+      batBar.style.width  = bpc + '%';
+      batBar.style.background = batColor;
+      document.getElementById('bat-label').textContent =
+        bv.toFixed(2) + 'V (' + bpc + '%)';
       document.getElementById('uid-badge').textContent = data.uid;
       document.getElementById('updated').textContent =
         'updated ' + new Date().toLocaleTimeString();
@@ -588,6 +690,8 @@ void handleStatus() {
   int raw  = 0;
   int pct  = readMoisture(raw);
   float lux = readLux();
+  float battV = readBatter(/* pctOut */ lastBatteryPct);
+  lastBatteryV = battV;
 
   // update globals so display reflects latest SPA-triggered reading
   lastMoisturePct = pct;
@@ -598,6 +702,8 @@ void handleStatus() {
   json += "\"moisture_pct\":"  + String(pct)   + ",";
   json += "\"moisture_raw\":"  + String(raw)    + ",";
   json += "\"light_lux\":"     + String(lux, 1) + ",";
+  json += "\"battery_v\":"     + String(lastBatteryV, 2) + ",";
+  json += "\"battery_pct\":"   + String(lastBatteryPct) + ",";
   json += "\"uid\":\""         + UID            + "\"";
   json += "}";
   server.send(200, "application/json", json);
@@ -648,13 +754,16 @@ void setup() {
   lastMoistureRaw = 0;
   lastMoisturePct = readMoisture(lastMoistureRaw);
   lastLux         = readLux();
+  lastBatteryV    = readBatter(lastBatteryPct);
   Serial.printf("Moisture: %d%% (raw: %d)\n", lastMoisturePct, lastMoistureRaw);
   Serial.printf("Light: %.1f lux\n", lastLux);
+  Serial.printf("Battery: %.2f V (%d%%)\n", lastBatteryV, lastBatteryPct);
 
   // Publish
   if (online) {
     publishFloat(moistureFeed(), (float)lastMoisturePct);
     publishFloat(lightFeed(), lastLux);
+    publishFloat(batteryFeed(), lastBatteryPct);
   }
 
   // Start webserver
