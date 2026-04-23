@@ -36,16 +36,13 @@
 
 // --- Battery voltage divider guards ---
 #ifndef VBAT_PIN
-#define VBAT_PIN D10 // 1MΩ voltage divider from battery to ADC pin
+#define VBAT_PIN D1 // 1MΩ voltage divider from battery to ADC pin
 #endif
 #ifndef VBAT_POWER_PIN
-#define VBAT_POWER_PIN D8 // 2N7000 gate to switch divider for measurement
-#endif
-#ifndef VBAT_ADC_MV_MAX
-#define VBAT_ADC_MV_MAX 2450.0f // mV at ADC count 4095 (11dB, empirically ~2450)
+#define VBAT_POWER_PIN D3 // 2N7000 gate to switch divider for measurement
 #endif
 #ifndef VBAT_SCALE
-#define VBAT_SCALE 2.0f // restore divided voltage (1M/1M = ÷2)/ scale factor for voltage divider (1M /
+#define VBAT_SCALE 2.5f // restore divided voltage (1M/1M = ÷2)/ scale factor for voltage divider (1M /
 #endif
 #ifndef VBAT_FULL
 #define VBAT_FULL 4.20f // mV corresponding to 100% battery level (empirically ~4.2V)
@@ -164,21 +161,25 @@ float readLux() {
 }
 
 // read battery voltage by enabling power to divider, taking ADC readings, then disabling power to save current
-float readBatter(int &pctOut) {
+float readBattery(int &pctOut) {
+  pinMode(VBAT_PIN, INPUT);
   pinMode(VBAT_POWER_PIN, OUTPUT);
   digitalWrite(VBAT_POWER_PIN, HIGH);
   delay(VBAT_POWER_SETTLE_MS);
 
+  // Force ADC sample cap to pre-charge
+  analogRead(VBAT_PIN); // throwaway read
+  delay(10);
+
   uint32_t total = 0;
   for (int i = 0; i < VBAT_SAMPLES; i++) {
-    total += analogRead(VBAT_PIN);
+    total += analogReadMilliVolts(VBAT_PIN);
     delay(VBAT_SAMPLE_DELAY_MS);
   } 
   digitalWrite(VBAT_POWER_PIN, LOW); // kill divider power to save current
 
-  float raw = (float)total / VBAT_SAMPLES;
-  float adcMv = raw * (VBAT_ADC_MV_MAX / 4095.0f); // convert ADC count to mV 
-  float battV = (adcMv /1000.0f) * VBAT_SCALE; // restore actual battery voltage from divided voltage 
+  float adcMv = (float)total / VBAT_SAMPLES;
+  float battV = (adcMv / 1000.0f) * VBAT_SCALE;
 
   pctOut = (int)constrain(
     ((battV - VBAT_EMPTY) / (VBAT_FULL - VBAT_EMPTY)) * 100.0f,
@@ -502,7 +503,7 @@ void handleStatus() {
   int raw  = 0;
   int pct  = readMoisture(raw);
   float lux = readLux();
-  float battV = readBatter(/* pctOut */ lastBatteryPct);
+  float battV = readBattery(/* pctOut */ lastBatteryPct);
   lastBatteryV = battV;
 
   // update globals so display reflects latest SPA-triggered reading
@@ -548,7 +549,7 @@ void setup() {
   lastMoistureRaw = 0;
   lastMoisturePct = readMoisture(lastMoistureRaw);
   lastLux         = readLux();
-  lastBatteryV    = readBatter(lastBatteryPct);
+  lastBatteryV    = readBattery(lastBatteryPct);
   Serial.printf("Moisture: %d%% (raw: %d)\n", lastMoisturePct, lastMoistureRaw);
   Serial.printf("Light: %.1f lux\n", lastLux);
   Serial.printf("Battery: %.2f V (%d%%)\n", lastBatteryV, lastBatteryPct);
@@ -557,7 +558,7 @@ void setup() {
   if (online) {
     publishFloat(moistureFeed(), (float)lastMoisturePct);
     publishFloat(lightFeed(), lastLux);
-    publishFloat(batteryFeed(), lastBatteryPct);
+    publishFloat(batteryFeed(), lastBatteryV);
   }
 
   // Start webserver
